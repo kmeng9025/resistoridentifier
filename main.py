@@ -13,3 +13,9 @@ while (True):
     # frame = frame[1920*0.2 : 1920*0.8 , 1080*0.2:1080*0.2]
     cv2.imshow("Display", frame)
     time.sleep(2)
+    key = cv2.waitKey(1) & 0xFF
+    if key == ord('q'):
+        break
+
+cam.stop()
+cv2.destroyAllWindows()
