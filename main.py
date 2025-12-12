@@ -99,10 +99,11 @@ if __name__ == '__main__':
     while (True):
         frame = cam.capture_array()
         # frame = frame[1920*0.2 : 1920*0.8 , 1080*0.2:1080*0.2]
-        findBands(frame)
+        sortedbands = findBands(frame)
         # cv.imshow("Display", frame)
         time.sleep(2)
         key = cv.waitKey(1) & 0xFF
+        displayResults(sortedbands)
         if key == ord('q'):
             break
     cam.stop()
