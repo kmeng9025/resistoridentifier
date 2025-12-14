@@ -9,15 +9,15 @@ cam.preview_configuration.main.format = "RGB888"
 cam.configure("preview")
 cam.start()
 time.sleep(2)
-# meta = cam.capture_metadata()
-# cam.set_controls({
-#     "ExposureTime": meta["ExposureTime"],
-#     "AnalogueGain": meta["AnalogueGain"],
-#     "ColourGains": meta["ColourGains"],
-#     "AeEnable": False,
-#     "AwbEnable": False,
-# })
-# time.sleep(1)
+meta = cam.capture_metadata()
+cam.set_controls({
+    "ExposureTime": 5000,
+    "AnalogueGain": 1.0,
+    "ColourGains": meta["ColourGains"],
+    "AeEnable": False,
+    "AwbEnable": False,
+})
+time.sleep(1)
 while (True):
     frame = cam.capture_array()
     frame = frame[364:545, 44 : 1120]
