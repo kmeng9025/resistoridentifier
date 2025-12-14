@@ -3,19 +3,24 @@ from picamera2 import Picamera2
 import time
 
 cam = Picamera2()
+
 cam.preview_configuration.main.size = (1280, 720)
 cam.preview_configuration.main.format = "RGB888"
 cam.configure("preview")
 cam.start()
 time.sleep(2)
+meta = cam.capture_metadata()
+cam.set_controls({
+    "ExposureTime": meta["ExposureTime"],
+    "AnalogueGain": meta["AnalogueGain"],
+    "ColourGains": meta["ColourGains"],
+    "AeEnable": False,
+    "AwbEnable": False,
+})
+time.sleep(1)
 while (True):
     frame = cam.capture_array()
     frame = frame[364:545, 44 : 1120]
-    # pre_bil = cv2.bilateralFilter(frame, 5, 40, 20)
-    # hsv = cv2.cvtColor(pre_bil, cv2.COLOR_BGR2HSV)
-    # thresh = cv2.adaptiveThreshold(cv2.cvtColor(pre_bil, cv2.COLOR_BGR2GRAY), 255, cv2.ADAPTIVE_THRESH_MEAN_C,
-    #                                 cv2.THRESH_BINARY, 59, 5)
-    # thresh = cv2.bitwise_not(thresh)
     cv2.imshow("Display", frame)
     time.sleep(2)
     key = cv2.waitKey(1) & 0xFF
