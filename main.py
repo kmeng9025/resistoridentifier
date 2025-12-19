@@ -22,12 +22,13 @@ while (True):
         break
     exposureTime = input("exposureTime:")
     cam.set_controls({
-    "ExposureTime": int(exposureTime),
-    "AnalogueGain": 1.0,
-    "ColourGains": meta["ColourGains"],
-    "AeEnable": False,
-    "AwbEnable": False,
+        "ExposureTime": int(exposureTime),
+        "AnalogueGain": 1.0,
+        "ColourGains": meta["ColourGains"],
+        "AeEnable": False,
+        "AwbEnable": False,
     })
     time.sleep(1)
+    print("currentExposureTime", exposureTime)
 cam.stop()
 cv2.destroyAllWindows()
