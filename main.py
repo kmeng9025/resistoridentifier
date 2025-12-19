@@ -10,14 +10,8 @@ cam.configure("preview")
 cam.start()
 time.sleep(2)
 meta = cam.capture_metadata()
-cam.set_controls({
-    "ExposureTime": 50000,
-    "AnalogueGain": 1.0,
-    "ColourGains": meta["ColourGains"],
-    "AeEnable": False,
-    "AwbEnable": False,
-})
-time.sleep(1)
+
+exposureTime = 50000
 while (True):
     frame = cam.capture_array()
     frame = frame[364:545, 44 : 1120]
@@ -26,5 +20,14 @@ while (True):
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
         break
+    exposureTime = input("exposureTime:")
+    cam.set_controls({
+    "ExposureTime": int(exposureTime),
+    "AnalogueGain": 1.0,
+    "ColourGains": meta["ColourGains"],
+    "AeEnable": False,
+    "AwbEnable": False,
+    })
+    time.sleep(1)
 cam.stop()
 cv2.destroyAllWindows()
