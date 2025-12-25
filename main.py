@@ -22,6 +22,7 @@ while (True):
         break
     exposureTime = input("exposureTime:")
     cam.set_controls({
+        "FrameDurationLimits": (1_000_000, 1_000_000),
         "ExposureTime": int(exposureTime),
         "AnalogueGain": 1.0,
         "ColourGains": meta["ColourGains"],
