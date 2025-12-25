@@ -29,7 +29,7 @@ while (True):
         "AeEnable": False,
         "AwbEnable": False,
     })
-    time.sleep(1)
+    time.sleep(2)
     print("currentExposureTime", exposureTime)
 cam.stop()
 cv2.destroyAllWindows()
