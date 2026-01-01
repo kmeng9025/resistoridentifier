@@ -37,6 +37,7 @@ while (True):
         "AeEnable": False,
         "AwbEnable": False,
     })
+    cam.capture_metadata()
     time.sleep(2)
     print("currentExposureTime", exposureTime)
 cam.stop()
