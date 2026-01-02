@@ -21,6 +21,7 @@ cam.set_controls({
 time.sleep(1)
 
 while (True):
+    _ = cam.capture_array()
     frame = cam.capture_array()
     frame = frame[364:545, 44 : 1120]
     cv2.imshow("Display", frame)
@@ -38,7 +39,6 @@ while (True):
         "AwbEnable": False,
     })
     cam.capture_metadata()
-    cam.capture_array()
     time.sleep(2)
     print("currentExposureTime", exposureTime)
 cam.stop()
