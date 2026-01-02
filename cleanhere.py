@@ -1,13 +1,7 @@
 import cv2
-import time
 import numpy as np
-# import cv2
-# import numpy as np
-
-# frame = cv2.imread("yellowpurpleblackbrownbrown.png")
-
-
-
+import json
+import os
 # IMAGE_PATH = "yellowpurpleblackbrownbrown.png"
 # [132.  83.  57.]
 # [122.  69.  50.]
@@ -32,39 +26,171 @@ import numpy as np
 # [128.  63.   8.]
 # [125.  61.   8.]
 # [134.  83.  54.]
-# IMAGE_PATH = "brownblackblackgoldbrown.png"
+IMAGE_PATH = "brownblackblackgoldbrown.png"
 # [146.  75.  41.]
 # [190. 140.  78.]
 # [140.  63.   3.]
 # [145.5  69.    3. ]
 # [159.  80.  39.]
+# ---- ADDED: modes ----
+MODE = "detect"   # "detect" or "collect"
+SAMPLES_JSONL = "band_samples.jsonl"
+CALIBRATION_JSON = "calibration.json"
+ENHANCE_MODE = "none"   # "none", "contrast", "clahe_Lab"
+# ----------------------
 
-# Pixelation: smaller -> chunkier, but too small can merge nearby colors.
 PIXELATE_SCALE = 0.18
 
-# Use only the middle "core" of the resistor to avoid edge blur/background bleed
 CORE_TOP_FRAC = 0.25
 CORE_BOT_FRAC = 0.75
 
-# Edge detection on 1D lightness signal (Lab L*)
 EDGE_THRESH = 6          # try 5..12 (higher = fewer boundaries)
 MIN_BAND_WIDTH = 6       # pixels (increase if you get too many tiny bands)
 
-# If edges are still "soft", increase these:
-# - L_SMOOTH_KSIZE (stronger smoothing -> cleaner boundaries)
-# - EDGE_DILATE (merge nearby edges)
 L_SMOOTH_KSIZE = 11      # odd, try 9, 11, 15, 21
 EDGE_DILATE = 3          # try 1..7 (higher merges close boundaries)
 
-# Blue background mask (adjust to your setup)
-# rgb(1, 137, 210)
-# bgr
-# LOWER_BLUE = np.array([180, 120, 0])
-# UPPER_BLUE = np.array([230, 150, 10])
+def roi_pixels(pre_bil_cropped, inverse_mask, i_rect):
+    """
+    Returns the exact pixel array you already average over,
+    but flattened to Nx3 BGR for calibration/classification.
 
-# =======================
-# HELPERS
-# =======================
+    i_rect is one element from rectangles (your list), i.e. [0, start_x, 0, end_x]
+    """
+    y0 = i_rect[0]
+    x1 = i_rect[1]
+    x2 = i_rect[3]
+
+    pad = int(abs(x2 - x1) / 2.5)
+    xa = (x1 + pad)
+    xb = (x2 - pad)
+
+    roi = pre_bil_cropped[y0:len(inverse_mask), xa:xb]
+    if roi.size == 0:
+        return None
+    return roi.reshape(-1, 3).astype(np.float32)
+
+def enhance_for_measurement(pixels_bgr, mode="none"):
+    """
+    Enhance separation AFTER segmentation, ONLY for color measurement.
+    Does NOT affect your mask/rectangles.
+    pixels_bgr: Nx3 float32
+    """
+    if mode == "none":
+        return pixels_bgr
+
+    # Convert to uint8 image-like for simple ops
+    p = np.clip(pixels_bgr, 0, 255).astype(np.uint8)
+    # reshape to 1xN "image"
+    img = p.reshape(1, -1, 3)
+
+    if mode == "clahe_Lab":
+        lab = cv2.cvtColor(img, cv2.COLOR_BGR2LAB)
+        L, A, B = cv2.split(lab)
+        clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
+        L2 = clahe.apply(L)
+        lab2 = cv2.merge([L2, A, B])
+        out = cv2.cvtColor(lab2, cv2.COLOR_LAB2BGR)
+        return out.reshape(-1, 3).astype(np.float32)
+
+    if mode == "contrast":
+        # simple linear contrast stretch around mean
+        out = cv2.convertScaleAbs(img, alpha=1.3, beta=0)
+        return out.reshape(-1, 3).astype(np.float32)
+
+    return pixels_bgr
+
+def band_feature(pixels_bgr):
+    """
+    Feature from your REAL isolated pixels (no full-image conversion).
+    Uses robust stats so blur/noise hurts less.
+
+    Returns dict of features.
+    """
+    b = pixels_bgr[:, 0]
+    g = pixels_bgr[:, 1]
+    r = pixels_bgr[:, 2]
+    # robust center
+    med = np.array([np.median(b), np.median(g), np.median(r)], dtype=np.float32)
+
+    # normalized chromaticity (helps with WB/exposure)
+    s = float(med.sum())
+    if s <= 1e-6:
+        chrom = np.array([0.0, 0.0, 0.0], dtype=np.float32)
+    else:
+        chrom = med / s
+
+    # brightness proxy (helps black vs brown vs yellow)
+    bright = float(0.114 * med[0] + 0.587 * med[1] + 0.299 * med[2])
+
+    return {
+        "med_bgr": med,
+        "chrom": chrom,
+        "bright": bright
+    }
+
+def save_sample(sample_path, image_path, band_index, feat, label=""):
+    """
+    Append one band sample to a JSONL file for calibration.
+    """
+    rec = {
+        "image": image_path,
+        "band": int(band_index),
+        "label": label,
+        "med_bgr": feat["med_bgr"].tolist(),
+        "chrom": feat["chrom"].tolist(),
+        "bright": feat["bright"]
+    }
+    with open(sample_path, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+def load_calibration(cal_path):
+    with open(cal_path, "r") as f:
+        return json.load(f)
+
+def classify_from_calibration(feat, cal):
+    """
+    cal format:
+      cal["classes"][name]["chrom_mean"] (len3)
+      cal["classes"][name]["chrom_std"]  (len3)
+      cal["classes"][name]["bright_mean"]
+      cal["classes"][name]["bright_std"]
+    """
+    x = np.array(feat["chrom"], dtype=np.float32)
+    b = float(feat["bright"])
+
+    best = None
+    best_score = 1e9
+    second = 1e9
+
+    for name, c in cal["classes"].items():
+        mu = np.array(c["chrom_mean"], dtype=np.float32)
+        sd = np.array(c["chrom_std"], dtype=np.float32)
+        sd = np.maximum(sd, 1e-4)
+
+        # z-score distance in chromaticity
+        z = (x - mu) / sd
+        d_chrom = float(np.sqrt((z * z).sum()))
+
+        # brightness z-score (helps brown/yellow/black)
+        bmu = float(c["bright_mean"])
+        bsd = max(float(c["bright_std"]), 1e-4)
+        d_bright = abs(b - bmu) / bsd
+
+        score = d_chrom + 0.6 * d_bright  # weight brightness a bit
+
+        if score < best_score:
+            second = best_score
+            best_score = score
+            best = name
+        elif score < second:
+            second = score
+
+    # confidence from separation
+    conf = 1.0 - (best_score / (best_score + second + 1e-6))
+    conf = float(np.clip(conf, 0.0, 1.0))
+    return best, conf, best_score
+
 def smooth_1d(x, ksize):
     """Gaussian smooth a 1D array using OpenCV."""
     x = x.astype(np.float32)
@@ -87,95 +213,36 @@ def group_edges(edge_idx, radius=3):
             groups.append([e])
     return [int(np.median(g)) for g in groups]
 
-# =======================
-# LOAD
-# =======================
 frame = cv2.imread(IMAGE_PATH)
 if frame is None:
     raise FileNotFoundError(f"Could not read image: {IMAGE_PATH}")
 
-# =======================
-# DENOISE + SHARPEN
-# =======================
 den = cv2.fastNlMeansDenoisingColored(frame, None, 5, 5, 7, 21)
 blur = cv2.GaussianBlur(den, (0, 0), 2.0)
 sharp = cv2.addWeighted(den, 1.6, blur, -0.6, 0)
 
-# =======================
-# BLOCKIFY (PIXELATE) — local averaging only, avoids global color merging
-# =======================
 h, w = sharp.shape[:2]
 sw, sh = max(1, int(w * PIXELATE_SCALE)), max(1, int(h * PIXELATE_SCALE))
 small = cv2.resize(sharp, (sw, sh), interpolation=cv2.INTER_AREA)
 blocky = cv2.resize(small, (w, h), interpolation=cv2.INTER_NEAREST)
-
-# =======================
-# ROI FIND (NOT BLUE BACKGROUND)
-# =======================
-# hsv = cv2.cvtColor(blocky, cv2.COLOR_BGR2HSV)
-# blue_mask = cv2.inRange(hsv, LOWER_BLUE, UPPER_BLUE)
-# obj = cv2.bitwise_not(blue_mask)
-
-# kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-# obj = cv2.morphologyEx(obj, cv2.MORPH_CLOSE, kernel, iterations=2)
-# obj = cv2.morphologyEx(obj, cv2.MORPH_OPEN,  kernel, iterations=1)
-
-# ys, xs = np.where(obj == 0)  # object pixels (not blue)
-# if len(xs) == 0:
-#     raise RuntimeError("No object found. Adjust BLUE HSV thresholds.")
-
-# y0, y1 = ys.min(), ys.max()
-# x0, x1 = xs.min(), xs.max()
-
-# roi = blocky[y0:y1+1, x0:x1+1].copy()
-
-# # =======================
-# # CROP TO CORE (REMOVE TOP/BOTTOM EDGES)
-# # =======================
-# rh = roi.shape[0]
-# yt = int(CORE_TOP_FRAC * rh)
-# yb = int(CORE_BOT_FRAC * rh)
-# core = roi[yt:yb, :].copy()
-
-# =======================
-# STEP A: SNAP EACH COLUMN TO ONE COLOR (very sharp vertical steps)
-# =======================
 snapped = blocky.copy()
 for x in range(blocky.shape[1]):
     snapped[:, x] = np.median(blocky[:, x], axis=0)
 
 pre_bil = cv2.bilateralFilter(snapped, 10, 100, 200)
-# pre_bil = cv2.bilateralFilter(frame, 10, 10, 200)
-
-
-
-
-
-
-
-
 
 DOWNSAMPLE_MAX_W = 320
 
-# Ignore near-gray pixels when searching for the dominant "background color"
-# (background blue is usually high saturation; resistor bands often include low sat colors)
 MIN_S_FOR_DOMINANT = 90      # 0..255
 MIN_V_FOR_DOMINANT = 40      # 0..255
 
-# HSV range half-widths around the dominant background color
-# Hue wrap-around is handled automatically.
 H_TOL = 5                   # 0..179 (OpenCV hue)
 S_TOL = 70                   # 0..255
 V_TOL = 70                   # 0..255
 
-# Morphology cleanup
 MORPH_K = 5
 MORPH_OPEN_ITERS = 1
 MORPH_CLOSE_ITERS = 2
-
-# =======================
-# HELPERS
-# =======================
 def dominant_hsv_from_hist(hsv_img, min_s=60, min_v=40, h_bins=180, s_bins=64, v_bins=64):
     """
     Find the most common HSV color (mode) using a 3D histogram, ignoring low-sat/low-val pixels.
@@ -187,18 +254,15 @@ def dominant_hsv_from_hist(hsv_img, min_s=60, min_v=40, h_bins=180, s_bins=64, v
 
     valid = (S >= min_s) & (V >= min_v)
     if np.count_nonzero(valid) < 100:
-        # Fallback: don't filter if too few pixels pass
         valid = np.ones(H.shape, dtype=bool)
 
     h = H[valid].astype(np.int32)
     s = S[valid].astype(np.int32)
     v = V[valid].astype(np.int32)
 
-    # Bin S and V to reduce noise and speed up the 3D histogram
     s_bin = np.clip((s * s_bins) // 256, 0, s_bins - 1)
     v_bin = np.clip((v * v_bins) // 256, 0, v_bins - 1)
 
-    # 3D histogram indexing: idx = h*(s_bins*v_bins) + s_bin*v_bins + v_bin
     idx = h * (s_bins * v_bins) + s_bin * v_bins + v_bin
     hist = np.bincount(idx, minlength=180 * s_bins * v_bins)
     best = int(np.argmax(hist))
@@ -208,7 +272,6 @@ def dominant_hsv_from_hist(hsv_img, min_s=60, min_v=40, h_bins=180, s_bins=64, v
     best_sbin = rem // v_bins
     best_vbin = rem % v_bins
 
-    # Convert bin centers back to S,V (0..255)
     best_s = int((best_sbin + 0.5) * 256 / s_bins)
     best_v = int((best_vbin + 0.5) * 256 / v_bins)
 
@@ -229,11 +292,9 @@ def hsv_range_wrap(h, s, v, h_tol, s_tol, v_tol):
 
     ranges = []
     if h0 < 0:
-        # Wrap below 0: [0..h1] and [180+h0..179]
         ranges.append((np.array([0,  s0, v0]), np.array([h1,  s1, v1])))
         ranges.append((np.array([180 + h0, s0, v0]), np.array([179, s1, v1])))
     elif h1 > 179:
-        # Wrap above 179: [h0..179] and [0..h1-180]
         ranges.append((np.array([h0, s0, v0]), np.array([179, s1, v1])))
         ranges.append((np.array([0,  s0, v0]), np.array([h1 - 180, s1, v1])))
     else:
@@ -248,56 +309,22 @@ def inrange_multi(hsv, ranges):
         m = cv2.inRange(hsv, lo, hi)
         mask = m if mask is None else cv2.bitwise_or(mask, m)
     return mask
-
-# =======================
-# LOAD
-# =======================
 img = pre_bil
-
-# =======================
-# DOWNSAMPLE for dominant-color estimation
-# =======================
 h, w = img.shape[:2]
 if w > DOWNSAMPLE_MAX_W:
     scale = DOWNSAMPLE_MAX_W / w
     small = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
 else:
     small = img.copy()
-
 hsv_small = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
 dom_h, dom_s, dom_v = dominant_hsv_from_hist(
     hsv_small, min_s=MIN_S_FOR_DOMINANT, min_v=MIN_V_FOR_DOMINANT
 )
-
 print("Dominant HSV (OpenCV):", (dom_h, dom_s, dom_v))
-
-# =======================
-# Build "background blue" mask from dominant HSV
-# =======================
 hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
-
 ranges = hsv_range_wrap(dom_h, dom_s, dom_v, H_TOL, S_TOL, V_TOL)
 bg_mask = inrange_multi(hsv, ranges)          # 255 = background-like
 obj_mask = cv2.bitwise_not(bg_mask)           # 255 = not-background (resistor + others)
-
-# Cleanup masks
-# k = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (MORPH_K, MORPH_K))
-# bg_mask_clean = cv2.morphologyEx(bg_mask, cv2.MORPH_OPEN,  k, iterations=MORPH_OPEN_ITERS)
-# bg_mask_clean = cv2.morphologyEx(bg_mask_clean, cv2.MORPH_CLOSE, k, iterations=MORPH_CLOSE_ITERS)
-# obj_mask_clean = cv2.bitwise_not(bg_mask_clean)
-
-
-
-
-
-
-
-
-# hsv = cv2.cvtColor(pre_bil, cv2.COLOR_BGR2HSV)
-# lower_blue = np.array([80, 120, 50])
-# upper_blue = np.array([130, 255, 255])
-# blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
-# inverse_mask = cv2.bitwise_not(blue_mask)
 inverse_mask = obj_mask
 kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5)) 
 inverse_mask = cv2.dilate(inverse_mask, kernel, iterations=5)
@@ -320,13 +347,6 @@ for i in range(len(inverse_mask)):
 file.close()
 cropped[2:] = last
 pre_bil_cropped = pre_bil[cropped[0] : cropped[2], cropped[1] : cropped[3]]
-
-
-
-
-
-
-
 inverse_mask = inverse_mask[cropped[0] : cropped[2], cropped[1] : cropped[3]]
 oned = False
 rectangles = []
@@ -348,7 +368,32 @@ themask = np.zeros((inverse_mask.__len__(), inverse_mask[0].__len__()), np.uint8
 try:
     for i in rectangles:
         themask [i[0] :len(inverse_mask), (i[1] + int(abs(i[3]-i[1])/2.5)):(i[3] - int(abs(i[3]-i[1])/2.5))] = 1
-        print(np.mean(np.mean(pre_bil_cropped[i[0] :len(inverse_mask), (i[1] + int(abs(i[3]-i[1])/2.5)):(i[3] - int(abs(i[3]-i[1])/2.5))], 0), 0))
+        # print(np.mean(np.mean(pre_bil_cropped[i[0] :len(inverse_mask), (i[1] + int(abs(i[3]-i[1])/2.5)):(i[3] - int(abs(i[3]-i[1])/2.5))], 0), 0))
+        roi_pix = roi_pixels(pre_bil_cropped, inverse_mask, i)
+        if roi_pix is None:
+            continue
+
+        roi_pix2 = enhance_for_measurement(roi_pix, mode=ENHANCE_MODE)
+        feat = band_feature(roi_pix2)
+
+        # YOUR original mean print (keep it)
+        print(np.mean(np.mean(pre_bil_cropped[i[0] :len(inverse_mask),
+                            (i[1] + int(abs(i[3]-i[1])/2.5)):(i[3] - int(abs(i[3]-i[1])/2.5))], 0), 0))
+
+        if MODE == "collect":
+            # You will edit labels later in band_samples.jsonl
+            save_sample(SAMPLES_JSONL, IMAGE_PATH, len(averages), feat, label="")
+            print("   saved sample ->", SAMPLES_JSONL)
+
+        elif MODE == "detect":
+            if os.path.exists(CALIBRATION_JSON):
+                cal = load_calibration(CALIBRATION_JSON)
+                label, conf, score = classify_from_calibration(feat, cal)
+                print("   ->", label, "conf=", round(conf, 2), "score=", round(score, 2),
+                      "chrom=", np.round(feat["chrom"], 3), "bright=", round(feat["bright"], 1))
+            else:
+                print("   (no calibration.json found; set MODE='collect' to gather samples)")
+
 except Exception as e:
     pass
 result = cv2.bitwise_and(pre_bil_cropped, pre_bil_cropped, mask=themask)
@@ -357,6 +402,5 @@ cv2.imshow("Display", result)
 cv2.imshow("Display3", pre_bil_cropped)
 cv2.imshow("Display4", inverse_mask)
 cv2.imshow("Display5", pre_bil)
-# cv2.imshow("Display6", pre_bil_cropped)
 key = cv2.waitKey(0) & 0xFF
 cv2.destroyAllWindows()
