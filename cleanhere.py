@@ -293,7 +293,7 @@ def group_edges(edge_idx, radius=3):
 
 # count 
 for i in range(160):
-    IMAGE_PATH = "Display" + str(i) + ".png"
+    IMAGE_PATH = "./images/Display" + str(i) + ".png"
     if(not os.path.exists(IMAGE_PATH)):
         continue
     frame = cv2.imread(IMAGE_PATH)
