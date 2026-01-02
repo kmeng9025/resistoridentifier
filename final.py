@@ -303,9 +303,9 @@ def process_frame(frame_bgr, frame_idx=0):
             "result": f"{DEBUG_DIR}/result_{frame_idx:06d}.png",
         }
         cv2.imwrite(debug_paths["frame"], frame_bgr)
-        cv2.imwrite(debug_paths["pre_bil"], pre_bil)
-        cv2.imwrite(debug_paths["cropped"], pre_bil_cropped)
-        cv2.imwrite(debug_paths["mask"], inverse_mask_cropped)
+        # cv2.imwrite(debug_paths["pre_bil"], pre_bil)
+        # cv2.imwrite(debug_paths["cropped"], pre_bil_cropped)
+        # cv2.imwrite(debug_paths["mask"], inverse_mask_cropped)
         cv2.imwrite(debug_paths["result"], result)
     
     cv2.imshow("frame", frame_bgr)
