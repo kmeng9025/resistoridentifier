@@ -307,7 +307,8 @@ def process_frame(frame_bgr, frame_idx=0):
         # cv2.imwrite(debug_paths["cropped"], pre_bil_cropped)
         # cv2.imwrite(debug_paths["mask"], inverse_mask_cropped)
         cv2.imwrite(debug_paths["result"], result)
-    
+        
+    result = cv2.bitwise_and(pre_bil_cropped, pre_bil_cropped, mask=themask)
     cv2.imshow("frame", frame_bgr)
     cv2.imshow("pre_bil", pre_bil)
     cv2.imshow("cropped", pre_bil_cropped)
