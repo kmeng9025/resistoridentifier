@@ -1,6 +1,7 @@
 import cv2
 from picamera2 import Picamera2
 import time
+import os
 
 cam = Picamera2()
 
@@ -32,6 +33,14 @@ while (True):
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
         break
+    if input("remove image? (y/n)") == "y":
+        file_path = "Display"+str(frameNum)+".png"
+        if os.path.exists(file_path):
+            os.remove(file_path)
+            print(f"File '{file_path}' has been deleted successfully.")
+        else:
+            print(f"File '{file_path}' does not exist.")
+        # os.remove()
     frameNum += 1
     # exposureTime = input("exposureTime:")
     # print("currentExposureTime", exposureTime)
