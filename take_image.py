@@ -27,6 +27,7 @@ while (True):
     frame = cam.capture_array()
     frame = frame[404:585, 2:1078]
     cv2.imwrite("Display"+str(frameNum), frame)
+    cv2.imshow("Display", frame)
     # time.sleep(2)
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
