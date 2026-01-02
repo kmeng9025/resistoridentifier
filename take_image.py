@@ -20,21 +20,24 @@ cam.set_controls({
     "AwbEnable": False,
 })
 time.sleep(1)
-
+try:
+    os.mkdir("images")
+except Exception:
+    pass
 frameNum = 0
 while (True):
     if input("continue(takeimage)" + str(frameNum) + ":(y/n)") == "n":
         break
     frame = cam.capture_array()
     frame = frame[404:585, 2:1078]
-    cv2.imwrite("Display"+str(frameNum)+".png", frame)
+    cv2.imwrite("./images/Display"+str(frameNum)+".png", frame)
     cv2.imshow("Display", frame)
     # time.sleep(2)
     key = cv2.waitKey(1) & 0xFF
     if key == ord('q'):
         break
     if input("remove image? (y/n)") == "y":
-        file_path = "Display"+str(frameNum)+".png"
+        file_path = "./images/Display"+str(frameNum)+".png"
         if os.path.exists(file_path):
             os.remove(file_path)
             print(f"File '{file_path}' has been deleted successfully.")
