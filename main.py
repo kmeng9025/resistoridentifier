@@ -12,7 +12,7 @@ time.sleep(2)
 meta = cam.capture_metadata()
 cam.set_controls({
     "FrameDurationLimits": (500_000, 500_000),
-    "ExposureTime": 100000,
+    "ExposureTime": 50000,
     "AnalogueGain": 1.0,
     "ColourGains": meta["ColourGains"],
     "AeEnable": False,
