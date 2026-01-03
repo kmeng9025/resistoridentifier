@@ -45,7 +45,7 @@ CORE_TOP_FRAC = 0.25
 CORE_BOT_FRAC = 0.75
 
 EDGE_THRESH = 6          # try 5..12 (higher = fewer boundaries)
-MIN_BAND_WIDTH = 6       # pixels (increase if you get too many tiny bands)
+MIN_BAND_WIDTH = 20       # pixels (increase if you get too many tiny bands)
 
 L_SMOOTH_KSIZE = 11      # odd, try 9, 11, 15, 21
 EDGE_DILATE = 3          # try 1..7 (higher merges close boundaries)
@@ -292,7 +292,7 @@ def group_edges(edge_idx, radius=3):
     return [int(np.median(g)) for g in groups]
 
 # count 
-for i in range(160):
+for i in range(400):
     IMAGE_PATH = "./images/Display" + str(i) + ".png"
     if(not os.path.exists(IMAGE_PATH)):
         continue
@@ -326,7 +326,7 @@ for i in range(160):
     dom_h, dom_s, dom_v = dominant_hsv_from_hist(
         hsv_small, min_s=MIN_S_FOR_DOMINANT, min_v=MIN_V_FOR_DOMINANT
     )
-    print("Dominant HSV (OpenCV):", (dom_h, dom_s, dom_v))
+    # print("Dominant HSV (OpenCV):", (dom_h, dom_s, dom_v))
     hsv = cv2.cvtColor(img, cv2.COLOR_BGR2HSV)
     ranges = hsv_range_wrap(dom_h, dom_s, dom_v, H_TOL, S_TOL, V_TOL)
     bg_mask = inrange_multi(hsv, ranges)          # 255 = background-like
@@ -352,8 +352,9 @@ for i in range(160):
         file.write("\n")
     file.close()
     cropped[2:] = last
-    pre_bil_cropped = pre_bil[cropped[0] : cropped[2], cropped[1] : cropped[3]]
-    inverse_mask = inverse_mask[cropped[0] : cropped[2], cropped[1] : cropped[3]]
+    pre_bil_cropped = pre_bil[cropped[0] : cropped[2], 0 : cropped[3]]
+    # pre_bil_cropped = pre_bil
+    inverse_mask = inverse_mask[cropped[0] : cropped[2], 0 : cropped[3]]
     oned = False
     rectangles = []
     file = open("out2.txt", "w")
@@ -367,12 +368,29 @@ for i in range(160):
             rectangles.append([0, j])
             file.write(str(inverse_mask[0][j]))
     file.close()
-    print(inverse_mask[0][0])
-    print(rectangles)
+    # print(inverse_mask[0][0])
+    # print(rectangles)
     averages = []
     themask = np.zeros((inverse_mask.__len__(), inverse_mask[0].__len__()), np.uint8)
+    count = 0
+    
+    for i in rectangles:
+        if(len(i) != 4):
+            rectangles[-1].append(len(inverse_mask))
+            rectangles[-1].append(len(inverse_mask[0]))
+        if(abs(i[1]-i[3]) < MIN_BAND_WIDTH):
+            continue
+            # pass
+        count += 1
+    print(count)
+    if (count != 5):
+        print("NOT 5 BANDS! image:" + IMAGE_PATH)
+        continue
     try:
         for i in rectangles:
+            if(abs(i[1]-i[3]) < MIN_BAND_WIDTH):
+                continue
+            # count += 1
             themask [i[0] :len(inverse_mask), (i[1] + int(abs(i[3]-i[1])/2.5)):(i[3] - int(abs(i[3]-i[1])/2.5))] = 1
             # print(np.mean(np.mean(pre_bil_cropped[i[0] :len(inverse_mask), (i[1] + int(abs(i[3]-i[1])/2.5)):(i[3] - int(abs(i[3]-i[1])/2.5))], 0), 0))
             roi_pix = roi_pixels(pre_bil_cropped, inverse_mask, i)
@@ -383,30 +401,30 @@ for i in range(160):
             feat = band_feature(roi_pix2)
 
             # YOUR original mean print (keep it)
-            print(np.mean(np.mean(pre_bil_cropped[i[0] :len(inverse_mask),
-                                (i[1] + int(abs(i[3]-i[1])/2.5)):(i[3] - int(abs(i[3]-i[1])/2.5))], 0), 0))
+            # print(np.mean(np.mean(pre_bil_cropped[i[0] :len(inverse_mask),
+            #                     (i[1] + int(abs(i[3]-i[1])/2.5)):(i[3] - int(abs(i[3]-i[1])/2.5))], 0), 0))
 
             if MODE == "collect":
                 # You will edit labels later in band_samples.jsonl
                 save_sample(SAMPLES_JSONL, IMAGE_PATH, len(averages), feat, label="")
-                print("   saved sample ->", SAMPLES_JSONL)
+                # print("   saved sample ->", SAMPLES_JSONL)
 
             elif MODE == "detect":
                 if os.path.exists(CALIBRATION_JSON):
                     cal = load_calibration(CALIBRATION_JSON)
                     label, conf, score = classify_from_calibration(feat, cal)
-                    print("   ->", label, "conf=", round(conf, 2), "score=", round(score, 2),
-                        "chrom=", np.round(feat["chrom"], 3), "bright=", round(feat["bright"], 1))
+                    # print("   ->", label, "conf=", round(conf, 2), "score=", round(score, 2),
+                    #     "chrom=", np.round(feat["chrom"], 3), "bright=", round(feat["bright"], 1))
                 else:
                     print("   (no calibration.json found; set MODE='collect' to gather samples)")
-
     except Exception as e:
         pass
-    result = cv2.bitwise_and(pre_bil_cropped, pre_bil_cropped, mask=themask)
-    cv2.imshow("Display2", frame)
-    cv2.imshow("Display", result)
-    cv2.imshow("Display3", pre_bil_cropped)
-    cv2.imshow("Display4", inverse_mask)
-    cv2.imshow("Display5", pre_bil)
-    key = cv2.waitKey(0) & 0xFF
-    cv2.destroyAllWindows()
+    
+    # result = cv2.bitwise_and(pre_bil_cropped, pre_bil_cropped, mask=themask)
+    # cv2.imshow("Display2", frame)
+    # cv2.imshow("Display", result)
+    # cv2.imshow("Display3", pre_bil_cropped)
+    # cv2.imshow("Display4", inverse_mask)
+    # cv2.imshow("Display5", pre_bil)
+    # key = cv2.waitKey(0) & 0xFF
+    # cv2.destroyAllWindows()

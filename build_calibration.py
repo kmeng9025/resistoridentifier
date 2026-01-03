@@ -2,8 +2,8 @@ import json
 import numpy as np
 from collections import defaultdict
 
-SAMPLES_JSONL = "band_samples.jsonl"
-OUT_JSON = "calibration.json"
+SAMPLES_JSONL = "band_samples_from_cleanhere copy 2.jsonl"
+OUT_JSON = "calibration_from_cleanhere.json"
 
 data = []
 with open(SAMPLES_JSONL, "r") as f:
