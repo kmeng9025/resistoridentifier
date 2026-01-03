@@ -29,7 +29,7 @@ while (True):
     if input("continue(takeimage)" + str(frameNum) + ":(y/n)") == "n":
         break
     frame = cam.capture_array()
-    frame = frame[404:585, 247:1078]
+    frame = frame[404:585, 270:1078]
     cv2.imwrite("./images/Display"+str(frameNum)+".png", frame)
     cv2.imshow("Display", frame)
     # time.sleep(2)
