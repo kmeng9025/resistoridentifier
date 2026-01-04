@@ -2,7 +2,8 @@ import cv2
 import numpy as np
 import time
 from picamera2 import Picamera2
-from LCD import LCD
+# from LCD import LCD
+import LCD1602
 
 # =========================
 # Pi/headless runtime config
@@ -476,15 +477,19 @@ def main():
     })
     time.sleep(2)
     frame_idx = 0
-    lcd = LCD()
+    # lcd = LCD()
+    LCD1602.init(0x27, 1)   # init(slave address, background light)
+    # time.sleep(2)
     while (True):
         frame = cam.capture_array()
         frame = frame[404:585, 2:1078]
         out = process_frame(frame, frame_idx=frame_idx)
         if out is not None:
             bands = out["bands"]
-            from LCD import LCD
-            lcd.message(" | ".join([f"{lbl}" for (lbl, _, _, _) in bands]), 1)
+            # from LCD import LCD
+            LCD1602.write(0, 0, " ".join([f"{lbl}" for (lbl, _, _, _) in bands]))
+            # LCD1602.write(1, 1, 'From SunFounder')
+            # lcd.message(, 1)
             summary = " | ".join([f"{lbl}({conf:.2f})" for (lbl, conf, _, _) in bands])
             print(f"[{0}] bands: {summary}")
         key = cv2.waitKey(1) & 0xFF
