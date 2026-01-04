@@ -232,8 +232,8 @@ def process_frame(frame_bgr, frame_idx=0):
     crop_y0, crop_x0 = divmod(first_flat, w_mask)
     crop_y1, crop_x1 = divmod(last_flat, w_mask)
 
-    pre_bil_cropped = pre_bil[crop_y0:crop_y1, crop_x0:crop_x1]
-    inverse_mask_cropped = inverse_mask[crop_y0:crop_y1, crop_x0:crop_x1]
+    pre_bil_cropped = pre_bil[crop_y0:crop_y1, 0:crop_x1]
+    inverse_mask_cropped = inverse_mask[crop_y0:crop_y1, 0:crop_x1]
     if pre_bil_cropped.size == 0 or inverse_mask_cropped.size == 0:
         return None
 
