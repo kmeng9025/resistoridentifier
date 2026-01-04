@@ -513,7 +513,7 @@ def main():
     cam.preview_configuration.main.format = "RGB888"
     cam.configure("preview")
     cam.start()
-    time.sleep(1)
+    time.sleep(0.5)
     meta = cam.capture_metadata()
     cam.set_controls({
         "FrameDurationLimits": (500_000, 500_000),
