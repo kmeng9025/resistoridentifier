@@ -523,7 +523,7 @@ def main():
         "AeEnable": False,
         "AwbEnable": False,
     })
-    time.sleep(2)
+    time.sleep(1)
     frame_idx = 0
     # lcd = LCD()
     LCD1602.init(0x27, 1)   # init(slave address, background light)
