@@ -309,7 +309,7 @@ def main():
     while True:
         frame = cam.capture_array()
         frame = frame[404:450, 2:1078]
-        frame = cv2.resize(frame, (500, 46))  # your crop
+        # frame = cv2.resize(frame, (500, 46))  # your crop
 
         out = process_frame(frame, frame_idx=frame_idx)
         if out is not None:
