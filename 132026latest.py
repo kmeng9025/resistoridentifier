@@ -557,37 +557,26 @@ from picamera2 import Picamera2
 import LCD1602
 
 # =========================
-# User settings
+# Runtime / camera
 # =========================
 FRAME_INTERVAL_SEC = 0.5
 
-# Crop (same as your existing code)
+# Your crop (unchanged)
 CROP_Y0, CROP_Y1 = 404, 585
 CROP_X0, CROP_X1 = 2, 1078
 
-# Downscale width for processing (major speed lever)
-PROC_W = 320  # try 240, 320, 400. Lower = faster.
-
-# Pixelate strength (blockier = more robust edges)
-PIXELATE_SCALE = 0.18  # keep similar intent
-
-# Band-edge detection tuning
-EDGE_SMOOTH_KSIZE = 11     # odd; try 9/11/15
-EDGE_DILATE = 3            # merges nearby edge spikes; try 1..7
-MIN_BAND_WIDTH_PX = 6      # in processed image pixels
-MAX_BANDS = 6              # show up to this many (often 5)
-
-# Use only middle rows of the resistor strip to avoid reflections at top/bottom
-ROW_FRAC_TOP = 0.25
-ROW_FRAC_BOT = 0.75
+# IMPORTANT SPEED KNOB:
+# This is the width your full pipeline runs on.
+# 320 is a good start. If still slow, try 240 or 200.
+PROC_W = 320
 
 # Debug
 DEBUG_SAVE = False
-DEBUG_DIR = "debug_fast"
+DEBUG_DIR = "debug_similar"
 DEBUG_EVERY_N = 20
 
 # =========================
-# Calibration (your provided dict)
+# Your calibration (unchanged)
 # =========================
 CALIBRATION = {
     "classes": {
@@ -642,38 +631,43 @@ CALIBRATION = {
     }
 }
 
+# =========================
+# Pipeline constants (same intent)
+# =========================
+PIXELATE_SCALE = 0.18
+
+DOWNSAMPLE_MAX_W = 320
+MIN_S_FOR_DOMINANT = 90
+MIN_V_FOR_DOMINANT = 40
+
+H_TOL = 5
+S_TOL = 70
+V_TOL = 70
+
+# cache kernel (same shape as before)
+MORPH_KERNEL = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
+
 
 # =========================
-# Helpers
+# Core functions (same math)
 # =========================
-def smooth_1d(x: np.ndarray, ksize: int) -> np.ndarray:
-    if ksize % 2 == 0:
-        ksize += 1
-    x2 = x.astype(np.float32).reshape(1, -1, 1)
-    x2 = cv2.GaussianBlur(x2, (ksize, 1), 0)
-    return x2.reshape(-1)
+def band_feature_from_roi(roi_bgr_uint8: np.ndarray):
+    med = np.median(roi_bgr_uint8.reshape(-1, 3), axis=0).astype(np.float32)
+    s = float(med.sum())
+    chrom = (med / s) if s > 1e-6 else np.array([0.0, 0.0, 0.0], dtype=np.float32)
+    bright = float(0.114 * med[0] + 0.587 * med[1] + 0.299 * med[2])
+    return {"med_bgr": med, "chrom": chrom, "bright": bright}
 
 
-def classify_from_calibration(med_bgr: np.ndarray) -> tuple[str, float]:
-    """
-    med_bgr: float32 [B,G,R] (same channel order you used when calibrating)
-    returns (label, confidence)
-    """
-    s = float(med_bgr.sum())
-    if s <= 1e-6:
-        return "?", 0.0
+def classify_from_calibration(feat, cal):
+    x = np.array(feat["chrom"], dtype=np.float32)
+    b = float(feat["bright"])
 
-    chrom = (med_bgr / s).astype(np.float32)
-    bright = float(0.114 * med_bgr[0] + 0.587 * med_bgr[1] + 0.299 * med_bgr[2])
-
-    best_label = "?"
+    best_label = None
     best_score = 1e9
     second_best = 1e9
 
-    x = chrom
-    b = bright
-
-    for name, c in CALIBRATION["classes"].items():
+    for name, c in cal["classes"].items():
         mu = np.array(c["chrom_mean"], dtype=np.float32)
         sd = np.maximum(np.array(c["chrom_std"], dtype=np.float32), 1e-4)
 
@@ -695,124 +689,182 @@ def classify_from_calibration(med_bgr: np.ndarray) -> tuple[str, float]:
 
     conf = 1.0 - (best_score / (best_score + second_best + 1e-6))
     conf = float(np.clip(conf, 0.0, 1.0))
-    return best_label, conf
+    return best_label, conf, best_score
 
 
-def find_segments_from_column_colors(col_bgr_uint8: np.ndarray) -> list[tuple[int, int]]:
+def dominant_hsv_from_hist(hsv_img, min_s=60, min_v=40, h_bins=180, s_bins=64, v_bins=64):
+    H = hsv_img[:, :, 0]
+    S = hsv_img[:, :, 1]
+    V = hsv_img[:, :, 2]
+
+    valid = (S >= min_s) & (V >= min_v)
+    if np.count_nonzero(valid) < 100:
+        valid = np.ones(H.shape, dtype=bool)
+
+    h = H[valid].astype(np.int32)
+    s = S[valid].astype(np.int32)
+    v = V[valid].astype(np.int32)
+
+    s_bin = np.clip((s * s_bins) // 256, 0, s_bins - 1)
+    v_bin = np.clip((v * v_bins) // 256, 0, v_bins - 1)
+
+    idx = h * (s_bins * v_bins) + s_bin * v_bins + v_bin
+    hist = np.bincount(idx, minlength=180 * s_bins * v_bins)
+    best = int(np.argmax(hist))
+
+    best_h = best // (s_bins * v_bins)
+    rem = best % (s_bins * v_bins)
+    best_sbin = rem // v_bins
+    best_vbin = rem % v_bins
+
+    best_s = int((best_sbin + 0.5) * 256 / s_bins)
+    best_v = int((best_vbin + 0.5) * 256 / v_bins)
+    return best_h, best_s, best_v
+
+
+def hsv_range_wrap(h, s, v, h_tol, s_tol, v_tol):
+    s0 = max(0, s - s_tol)
+    s1 = min(255, s + s_tol)
+    v0 = max(0, v - v_tol)
+    v1 = min(255, v + v_tol)
+
+    h0 = h - h_tol
+    h1 = h + h_tol
+
+    ranges = []
+    if h0 < 0:
+        ranges.append((np.array([0, s0, v0]), np.array([h1, s1, v1])))
+        ranges.append((np.array([180 + h0, s0, v0]), np.array([179, s1, v1])))
+    elif h1 > 179:
+        ranges.append((np.array([h0, s0, v0]), np.array([179, s1, v1])))
+        ranges.append((np.array([0, s0, v0]), np.array([h1 - 180, s1, v1])))
+    else:
+        ranges.append((np.array([h0, s0, v0]), np.array([h1, s1, v1])))
+    return ranges
+
+
+def inrange_multi(hsv, ranges):
+    mask = None
+    for lo, hi in ranges:
+        m = cv2.inRange(hsv, lo, hi)
+        mask = m if mask is None else cv2.bitwise_or(mask, m)
+    return mask
+
+
+# =========================
+# Fast-ish "same pipeline" process
+# =========================
+def process_frame_similar(frame_bgr: np.ndarray, frame_idx: int):
     """
-    col_bgr_uint8: shape (W,3) median BGR per column
-    returns list of (start_x, end_x) in [0..W]
+    Same pipeline as before, but runs on a downscaled version of the cropped strip.
+    Returns list of (label, conf).
     """
-    w = col_bgr_uint8.shape[0]
-    if w < 5:
-        return []
-
-    # Use Lab distance for edge strength
-    lab = cv2.cvtColor(col_bgr_uint8.reshape(1, w, 3), cv2.COLOR_BGR2LAB).astype(np.int16)[0]  # (W,3)
-    d = np.abs(lab[1:] - lab[:-1]).sum(axis=1).astype(np.float32)  # (W-1,)
-    d_s = smooth_1d(d, EDGE_SMOOTH_KSIZE)
-
-    # Adaptive threshold:
-    # Use a high percentile baseline so it works across lighting changes.
-    p80 = float(np.percentile(d_s, 80))
-    p95 = float(np.percentile(d_s, 95))
-    edge_thresh = max(6.0, 0.5 * (p80 + p95))  # tuneable but stable
-
-    edges = (d_s > edge_thresh).astype(np.uint8) * 255
-    edges = cv2.dilate(edges.reshape(1, -1), np.ones((1, EDGE_DILATE), np.uint8), iterations=1).reshape(-1)
-
-    edge_idx = (np.where(edges > 0)[0] + 1).astype(int)
-    if edge_idx.size == 0:
-        return [(0, w)]
-
-    # Merge edges that are very close
-    merged = []
-    last = None
-    for e in edge_idx:
-        if last is None or (e - last) > 3:
-            merged.append(e)
-            last = e
-
-    bounds = [0] + merged + [w]
-
-    segs = []
-    for a, b in zip(bounds[:-1], bounds[1:]):
-        if (b - a) >= MIN_BAND_WIDTH_PX:
-            segs.append((int(a), int(b)))
-
-    return segs
-
-
-def process_frame_fast(frame_bgr: np.ndarray, frame_idx: int) -> list[tuple[str, float, tuple[int, int]]]:
-    """
-    Returns list of (label, conf, (start,end)) in left-to-right order.
-    """
-    # --- Downscale for speed ---
+    # 0) downscale early (speed key)
     h, w = frame_bgr.shape[:2]
     if w != PROC_W:
         scale = PROC_W / float(w)
         new_h = max(1, int(h * scale))
-        img = cv2.resize(frame_bgr, (PROC_W, new_h), interpolation=cv2.INTER_AREA)
+        frame_small = cv2.resize(frame_bgr, (PROC_W, new_h), interpolation=cv2.INTER_AREA)
     else:
-        img = frame_bgr
+        frame_small = frame_bgr
 
-    # --- Blockify (pixelate down/up, then column median snap) ---
-    ih, iw = img.shape[:2]
-    sw = max(1, int(iw * PIXELATE_SCALE))
-    sh = max(1, int(ih * PIXELATE_SCALE))
-    down = cv2.resize(img, (sw, sh), interpolation=cv2.INTER_AREA)
-    blocky = cv2.resize(down, (iw, ih), interpolation=cv2.INTER_NEAREST)
+    # 1) NLM denoise (same args)
+    denoised = cv2.fastNlMeansDenoisingColored(frame_small, None, 5, 5, 7, 21)
 
-    # Column median snap (fast when ih is small)
+    # 2) sharpen (same weights)
+    blurred = cv2.GaussianBlur(denoised, (0, 0), 2.0)
+    sharpened = cv2.addWeighted(denoised, 1.6, blurred, -0.6, 0)
+
+    # 3) pixelate (down/up)
+    img_h, img_w = sharpened.shape[:2]
+    small_w = max(1, int(img_w * PIXELATE_SCALE))
+    small_h = max(1, int(img_h * PIXELATE_SCALE))
+    down = cv2.resize(sharpened, (small_w, small_h), interpolation=cv2.INTER_AREA)
+    blocky = cv2.resize(down, (img_w, img_h), interpolation=cv2.INTER_NEAREST)
+
+    # 4) column median snap (same operation)
     snapped = blocky.copy()
     snapped[:, :] = np.median(blocky, axis=0)
 
-    # Use only center rows to reduce glare/noise
-    r0 = int(snapped.shape[0] * ROW_FRAC_TOP)
-    r1 = int(snapped.shape[0] * ROW_FRAC_BOT)
-    core = snapped[r0:r1, :, :]
+    # 5) bilateral (same args)
+    pre_bil = cv2.bilateralFilter(snapped, 10, 100, 200)
 
-    # Median color per column
-    col_bgr = np.median(core, axis=0).astype(np.uint8)  # (W,3)
+    # 6) dominant HSV background + inverse mask (same logic)
+    h0, w0 = pre_bil.shape[:2]
+    if w0 > DOWNSAMPLE_MAX_W:
+        scale2 = DOWNSAMPLE_MAX_W / w0
+        small = cv2.resize(pre_bil, (int(w0 * scale2), int(h0 * scale2)), interpolation=cv2.INTER_AREA)
+    else:
+        small = pre_bil.copy()
 
-    # --- Segment bands from edges ---
-    segs = find_segments_from_column_colors(col_bgr)
+    hsv_small = cv2.cvtColor(small, cv2.COLOR_BGR2HSV)
+    dom_h, dom_s, dom_v = dominant_hsv_from_hist(hsv_small, min_s=MIN_S_FOR_DOMINANT, min_v=MIN_V_FOR_DOMINANT)
 
-    # --- Classify each segment by its median column color ---
+    hsv_full = cv2.cvtColor(pre_bil, cv2.COLOR_BGR2HSV)
+    ranges = hsv_range_wrap(dom_h, dom_s, dom_v, H_TOL, S_TOL, V_TOL)
+    bg_mask = inrange_multi(hsv_full, ranges)
+    inverse_mask = cv2.bitwise_not(bg_mask)
+
+    inverse_mask = cv2.dilate(inverse_mask, MORPH_KERNEL, iterations=5)
+    inverse_mask = cv2.erode(inverse_mask, MORPH_KERNEL, iterations=8)
+
+    # 7) crop to object area (same semantics)
+    h_mask, w_mask = inverse_mask.shape[:2]
+    non_bg_flat = np.flatnonzero(inverse_mask != 255)
+    if non_bg_flat.size == 0:
+        return []
+
+    first_flat = int(non_bg_flat[0])
+    last_flat = int(non_bg_flat[-1])
+    crop_y0, crop_x0 = divmod(first_flat, w_mask)
+    crop_y1, crop_x1 = divmod(last_flat, w_mask)
+
+    pre_bil_cropped = pre_bil[crop_y0:crop_y1, crop_x0:crop_x1]
+    inverse_mask_cropped = inverse_mask[crop_y0:crop_y1, crop_x0:crop_x1]
+    if pre_bil_cropped.size == 0 or inverse_mask_cropped.size == 0:
+        return []
+
+    # 8) rectangles from first row (same logic, vectorized equivalent)
+    first_row = inverse_mask_cropped[0].astype(np.uint8)
+    is_255 = (first_row == 255).astype(np.int8)
+    padded = np.pad(is_255, (1, 1), mode="constant", constant_values=0)
+    d = np.diff(padded)
+    starts = np.where(d == 1)[0]
+    ends = np.where(d == -1)[0]
+    rectangles = list(zip(starts.astype(int), ends.astype(int)))  # (start,end)
+
+    # 9) classify each band ROI (same features + calibration)
+    mask_h2, mask_w2 = inverse_mask_cropped.shape[:2]
     results = []
-    for a, b in segs:
-        seg_med = np.median(col_bgr[a:b, :], axis=0).astype(np.float32)
-        label, conf = classify_from_calibration(seg_med)
-        results.append((label, conf, (a, b)))
+    for start_x, end_x in rectangles:
+        pad = int(abs(end_x - start_x) / 2.5)
+        x_left = start_x + pad
+        x_right = end_x - pad
+        if x_right <= x_left:
+            continue
 
-    # Keep only the strongest-looking bands if too many
-    # (by width, stable order)
-    if len(results) > MAX_BANDS:
-        widths = [(i, (ab[1] - ab[0])) for i, (_, _, ab) in enumerate(results)]
-        keep_idx = {i for (i, _) in sorted(widths, key=lambda x: x[1], reverse=True)[:MAX_BANDS]}
-        results = [r for i, r in enumerate(results) if i in keep_idx]
+        roi = pre_bil_cropped[0:mask_h2, x_left:x_right]
+        if roi.size == 0:
+            continue
 
-    # Sort left-to-right
-    results.sort(key=lambda x: x[2][0])
+        feat = band_feature_from_roi(roi)
+        label, conf, _ = classify_from_calibration(feat, CALIBRATION)
+        results.append((label, conf))
 
-    # Optional debug save
+    # Optional debug dump
     if DEBUG_SAVE and (frame_idx % DEBUG_EVERY_N == 0):
         import os
         os.makedirs(DEBUG_DIR, exist_ok=True)
-        dbg = img.copy()
-        for (lbl, conf, (a, b)) in results:
-            cv2.rectangle(dbg, (a, 0), (b, dbg.shape[0] - 1), (0, 255, 0), 1)
-            cv2.putText(dbg, f"{lbl}:{conf:.2f}", (a, 12), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
-        cv2.imwrite(f"{DEBUG_DIR}/dbg_{frame_idx:06d}.png", dbg)
+        cv2.imwrite(f"{DEBUG_DIR}/prebil_{frame_idx:06d}.png", pre_bil_cropped)
+        cv2.imwrite(f"{DEBUG_DIR}/mask_{frame_idx:06d}.png", inverse_mask_cropped)
 
     return results
 
 
 # =========================
-# Main loop
+# Main loop (same input/output)
 # =========================
 def main():
-    # Camera init (same concept as your prior script)
     cam = Picamera2()
     cam.preview_configuration.main.size = (1280, 720)
     cam.preview_configuration.main.format = "RGB888"
@@ -820,7 +872,6 @@ def main():
     cam.start()
     time.sleep(1)
 
-    # Lock exposure/WB (keeps colors stable)
     meta = cam.capture_metadata()
     cam.set_controls({
         "FrameDurationLimits": (500_000, 500_000),
@@ -832,31 +883,27 @@ def main():
     })
     time.sleep(0.5)
 
-    # LCD init
     LCD1602.init(0x27, 1)
 
     frame_idx = 0
     next_time = time.time()
 
     while True:
-        frame = cam.capture_array()  # RGB888 array (kept consistent with your previous pipeline)
+        frame = cam.capture_array()
         crop = frame[CROP_Y0:CROP_Y1, CROP_X0:CROP_X1]
 
-        bands = process_frame_fast(crop, frame_idx)
+        bands = process_frame_similar(crop, frame_idx)
 
-        # Build LCD line (16 chars typical; keep short)
-        labels = [lbl for (lbl, conf, _) in bands]
+        labels = [lbl for (lbl, _) in bands]
         lcd_text = " ".join(labels)[:16]
 
         LCD1602.clear()
         LCD1602.write(0, 0, lcd_text)
 
-        # Console debug (optional)
-        print(f"[{frame_idx}] { ' | '.join([f'{lbl}({conf:.2f})' for (lbl, conf, _) in bands]) }")
+        print(f"[{frame_idx}] " + " | ".join([f"{lbl}({conf:.2f})" for (lbl, conf) in bands]))
 
         frame_idx += 1
 
-        # Scheduler to target FRAME_INTERVAL_SEC
         next_time += FRAME_INTERVAL_SEC
         sleep_for = next_time - time.time()
         if sleep_for > 0:
