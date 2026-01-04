@@ -487,6 +487,7 @@ def main():
         if out is not None:
             bands = out["bands"]
             # from LCD import LCD
+            LCD1602.clear()
             LCD1602.write(0, 0, " ".join([f"{lbl}" for (lbl, _, _, _) in bands]))
             # LCD1602.write(1, 1, 'From SunFounder')
             # lcd.message(, 1)
