@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import time
 from picamera2 import Picamera2
-import LCD
+from LCD import LCD
 
 # =========================
 # Pi/headless runtime config
