@@ -279,6 +279,15 @@ def process_frame(frame_bgr, frame_idx=0):
         result = cv2.bitwise_and(pre_bil_cropped, pre_bil_cropped, mask=themask)
         cv2.imwrite(f"{DEBUG_DIR}/result_{frame_idx:06d}.png", result)
 
+    result = cv2.bitwise_and(pre_bil_cropped, pre_bil_cropped, mask=themask)
+    # cv2.imshow("Display2", frame)
+    cv2.imshow("Display", result)
+    cv2.imshow("Display3", pre_bil_cropped)
+    cv2.imshow("Display4", inverse_mask)
+    cv2.imshow("Display5", pre_bil)
+    cv2.waitKey(1)
+    # cv2.destroyAllWindows()
+
     return {"bands": band_labels}
 
 
