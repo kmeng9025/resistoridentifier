@@ -309,7 +309,7 @@ def main():
     while True:
         frame = cam.capture_array()
         frame = frame[405:585, 2:1078]  # your crop
-        frame = cv2.resize(frame, (269, 90))
+        frame = cv2.resize(frame, (538, 90))
         out = process_frame(frame, frame_idx=frame_idx)
         if out is not None:
             bands = out["bands"]
