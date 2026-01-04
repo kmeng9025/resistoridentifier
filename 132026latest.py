@@ -286,6 +286,8 @@ def process_frame(frame_bgr, frame_idx=0):
     cv2.imshow("Display4", inverse_mask)
     cv2.imshow("Display5", pre_bil)
     cv2.waitKey(1)
+    # if cv2.waitKey(1) & 0xFF == ord('q'):
+    #     return
     # cv2.destroyAllWindows()
 
     return {"bands": band_labels}
