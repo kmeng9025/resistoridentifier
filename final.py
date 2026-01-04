@@ -72,7 +72,7 @@ DEBUG_EVERY_N = 10          # save debug images every N processed frames
 
 CALIBRATION = {
     "classes": {
-        "brown": {
+        "br": {
             # "n": 601,
             "chrom_mean": [
                 0.4798282980918884,
@@ -87,7 +87,7 @@ CALIBRATION = {
             "bright_mean": 66.7628402709961,
             "bright_std": 5.724446773529053
         },
-        "black": {
+        "bl": {
         # "n": 532,
             "chrom_mean": [
                 0.6021039485931396,
@@ -102,7 +102,7 @@ CALIBRATION = {
             "bright_mean": 50.54780197143555,
             "bright_std": 3.9904885292053223
         },
-        "green": {
+        "grn": {
         # "n": 55,
             "chrom_mean": [
                 0.4440917372703552,
@@ -117,7 +117,7 @@ CALIBRATION = {
             "bright_mean": 88.10596466064453,
             "bright_std": 10.14437198638916
         },
-        "red": {
+        "r": {
         # "n": 123,
             "chrom_mean": [
                 0.3880232870578766,
@@ -132,7 +132,7 @@ CALIBRATION = {
             "bright_mean": 76.12236785888672,
             "bright_std": 3.514045238494873
         },
-        "purple": {
+        "pur": {
         # "n": 77,
             "chrom_mean": [
                 0.7752211093902588,
@@ -147,7 +147,7 @@ CALIBRATION = {
             "bright_mean": 49.2727165222168,
             "bright_std": 1.1102464199066162
         },
-        "yellow": {
+        "ylw": {
         # "n": 77,
             "chrom_mean": [
                 0.41115206480026245,
@@ -162,7 +162,7 @@ CALIBRATION = {
             "bright_mean": 105.08103942871094,
             "bright_std": 11.39084529876709
         },
-        "gold": {
+        "gld": {
         # "n": 37,
             "chrom_mean": [
                 0.40534672141075134,
@@ -177,7 +177,7 @@ CALIBRATION = {
             "bright_mean": 146.63255310058594,
             "bright_std": 11.007163047790527
         },
-        "orange": {
+        "org": {
         # "n": 158,
             "chrom_mean": [
                 0.3136765956878662,
@@ -447,6 +447,13 @@ def process_frame(frame_bgr, frame_idx=0):
     }
 
 
+# def flip(bands):
+#     if ((bands[0][0] == "br" or bands[0][0] == "brown") and not (bands[-1][0] == "br" or bands[-1][0] == "brown")):
+#         return 1
+#     elif ((bands[-1][0] == "br" or bands[-1][0] == "brown") and not (bands[0][0] == "br" or bands[0][0] == "brown")):
+#         return 0
+#     return -1
+    
 # =========================
 # Main loop: one frame every 0.5 seconds
 # =========================
@@ -468,12 +475,15 @@ def main():
     })
     time.sleep(2)
     frame_idx = 0
+    lcd = LCD()
     while (True):
         frame = cam.capture_array()
         frame = frame[404:585, 2:1078]
         out = process_frame(frame, frame_idx=frame_idx)
         if out is not None:
             bands = out["bands"]
+            from LCD import LCD
+            lcd.message(" | ".join([f"{lbl}" for (lbl, _, _, _) in bands]), 1)
             summary = " | ".join([f"{lbl}({conf:.2f})" for (lbl, conf, _, _) in bands])
             print(f"[{0}] bands: {summary}")
         key = cv2.waitKey(1) & 0xFF
